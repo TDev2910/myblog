@@ -1,0 +1,51 @@
+# Những thứ được dựng lại bên trong image — copy từ host vào chỉ làm image phình
+# và tệ hơn là có nguy cơ lẫn artifact build của Windows vào image Linux.
+/vendor
+/node_modules
+/public/build
+/public/hot
+/public/storage
+/bootstrap/ssr
+/bootstrap/cache/*.php
+
+# Bí mật: KHÔNG BAO GIỜ nướng .env vào image. Image được đẩy lên registry,
+# ai pull được image là đọc được mọi lớp filesystem trong đó.
+.env
+.env.*
+!.env.example
+!.env.docker.example
+/storage/*.key
+/auth.json
+
+# Nội dung runtime — entrypoint sẽ tự mkdir lại, và storage/app/public là volume
+/storage/app/public/*
+/storage/app/private/*
+/storage/framework/cache/*
+/storage/framework/sessions/*
+/storage/framework/views/*
+/storage/logs/*
+/storage/pail
+
+# Không cần cho production runtime
+/tests
+/docs
+phpunit.xml
+.phpunit.result.cache
+/.phpunit.cache
+/.github
+/.claude
+README.md
+
+# Lặt vặt
+.git
+.gitignore
+.gitattributes
+.editorconfig
+.DS_Store
+Thumbs.db
+/.idea
+/.vscode
+/.fleet
+/.nova
+/.zed
+*.log

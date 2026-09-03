@@ -1,0 +1,101 @@
+name: myblog
+
+# CI build và push 2 image riêng từ 2 build target khác nhau của cùng
+# Dockerfile (app: nginx+php-fpm, ssr: node) — cùng repo GHCR, khác hậu tố tag,
+# xem .github/workflows/deploy.yml.
+x-app-image: &app-image ${IMAGE:-ghcr.io/your-github-username/myblog}:${TAG:-latest}
+x-ssr-image: &ssr-image ${IMAGE:-ghcr.io/your-github-username/myblog}:${TAG:-latest}-ssr
+x-app-volumes: &app-volumes
+  - storage_public:/var/www/html/storage/app/public
+
+services:
+  # nginx + php-fpm chạy chung 1 container (xem docker/php/Dockerfile) —
+  # đơn giản hơn tách 2 container cho quy mô 1 VPS, và tránh phải đồng bộ
+  # public/build + public/storage qua named volume giữa 2 filesystem khác nhau.
+  app:
+    image: *app-image
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+      target: app
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes: *app-volumes
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  queue:
+    image: *app-image
+    restart: unless-stopped
+    env_file: .env
+    entrypoint: entrypoint.sh
+    command: php artisan queue:work database --sleep=3 --tries=3 --max-time=3600
+    volumes: *app-volumes
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  ssr:
+    image: *ssr-image
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+      target: ssr
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE}
+      MYSQL_USER: ${DB_USERNAME}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Bước "release": migrate + cache config/route/view, chạy 1 lần rồi thoát
+  # (storage:link không cần ở đây — đã tạo sẵn lúc build image, xem Dockerfile).
+  # KHÔNG có restart, KHÔNG nằm trong luồng khởi động bình thường (profile
+  # "release" nghĩa là `docker compose up` bỏ qua nó) — gọi tay sau mỗi lần
+  # deploy: `docker compose run --rm release`
+  # (CI trong .github/workflows/deploy.yml đã tự gọi bước này.)
+  release:
+    image: *app-image
+    profiles: ["release"]
+    env_file: .env
+    entrypoint: entrypoint.sh
+    command: sh -c "php artisan migrate --force && php artisan config:cache && php artisan route:cache && php artisan view:cache"
+    volumes: *app-volumes
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+volumes:
+  mysql_data:
+  redis_data:
+  storage_public:
