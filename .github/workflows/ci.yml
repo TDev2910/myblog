@@ -64,3 +64,71 @@ jobs:
                   DB_DATABASE: myblog_test
                   DB_USERNAME: root
                   DB_PASSWORD: ''
+
+    # Build 2 image (app: nginx+php-fpm, ssr: node) từ 2 target khác nhau của
+    # cùng Dockerfile, push lên GHCR — chỉ khi test đã pass VÀ đang ở nhánh
+    # main (không chạy cho PR, tránh push image cho code chưa merge).
+    build-and-push:
+        needs: test
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            packages: write
+        strategy:
+            matrix:
+                target: [app, ssr]
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Log in to GHCR
+              uses: docker/login-action@v3
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Compute image tag suffix
+              id: suffix
+              run: |
+                  if [ "${{ matrix.target }}" = "ssr" ]; then
+                    echo "suffix=-ssr" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "suffix=" >> "$GITHUB_OUTPUT"
+                  fi
+
+            - name: Build and push
+              uses: docker/build-push-action@v6
+              with:
+                  context: .
+                  file: docker/php/Dockerfile
+                  target: ${{ matrix.target }}
+                  push: true
+                  tags: |
+                      ghcr.io/${{ github.repository }}:latest${{ steps.suffix.outputs.suffix }}
+                      ghcr.io/${{ github.repository }}:${{ github.sha }}${{ steps.suffix.outputs.suffix }}
+                  cache-from: type=gha,scope=${{ matrix.target }}
+                  cache-to: type=gha,mode=max,scope=${{ matrix.target }}
+
+    # Deploy: SSH vào VPS, kéo image mới nhất, chạy release (migrate+cache),
+    # rồi up lại các service. Cần 4 secret trong Settings > Secrets > Actions:
+    # DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY, DEPLOY_PATH (thư mục chứa
+    # docker-compose.yml + .env trên VPS — xem deploy/README.md).
+    deploy:
+        needs: build-and-push
+        runs-on: ubuntu-latest
+        steps:
+            - name: Deploy over SSH
+              uses: appleboy/ssh-action@v1
+              with:
+                  host: ${{ secrets.DEPLOY_HOST }}
+                  username: ${{ secrets.DEPLOY_USER }}
+                  key: ${{ secrets.DEPLOY_SSH_KEY }}
+                  script: |
+                      set -e
+                      cd "${{ secrets.DEPLOY_PATH }}"
+                      export TAG=${{ github.sha }}
+                      docker compose pull app ssr
+                      docker compose run --rm release
+                      docker compose up -d --remove-orphans
+                      docker image prune -f
