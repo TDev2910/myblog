@@ -1,0 +1,14 @@
+{
+  "enabledPlugins": {
+    "simplify@claude-settings": true,
+    "react-skills@claude-settings": true
+  },
+  "extraKnownMarketplaces": {
+    "claude-settings": {
+      "source": {
+        "source": "github",
+        "repo": "fcakyon/claude-codex-settings"
+      }
+    }
+  }
+}
